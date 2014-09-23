@@ -22,6 +22,12 @@
 
 package org.jboss.logmanager;
 
+import java.lang.invoke.CallSite;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
+import java.lang.invoke.MutableCallSite;
+import java.lang.invoke.SwitchPoint;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -31,7 +37,6 @@ import java.util.concurrent.ConcurrentMap;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
-
 import java.util.logging.Filter;
 import java.util.logging.Handler;
 import java.util.logging.Level;
@@ -102,6 +107,8 @@ final class LoggerNode {
      */
     private volatile int effectiveLevel = Logger.INFO_INT;
 
+    private SwitchPoint switchpoint;
+
     /**
      * Construct a new root instance.
      *
@@ -113,6 +120,7 @@ final class LoggerNode {
         handlersUpdater.clear(this);
         this.context = context;
         children = context.createChildMap();
+        this.switchpoint = LogManager.isInvokeDynamicEnabled() ? new SwitchPoint() : null;
     }
 
     /**
@@ -137,6 +145,7 @@ final class LoggerNode {
         this.context = context;
         effectiveLevel = parent.effectiveLevel;
         children = context.createChildMap();
+        this.switchpoint = LogManager.isInvokeDynamicEnabled() ? new SwitchPoint() : null;
     }
 
     /**
@@ -233,6 +242,7 @@ final class LoggerNode {
     void setEffectiveLevel(int newLevel) {
         if (level == null) {
             effectiveLevel = newLevel;
+            levelChanged();
             for (LoggerNode node : children.values()) {
                 if (node != null) {
                     node.setEffectiveLevel(newLevel);
@@ -321,6 +331,7 @@ final class LoggerNode {
                 }
             }
             effectiveLevel = newEffectiveLevel;
+            levelChanged();
             if (oldEffectiveLevel != newEffectiveLevel) {
                 // our level changed, recurse down to children
                 for (LoggerNode node : children.values()) {
@@ -436,6 +447,58 @@ final class LoggerNode {
     LoggerNode getParent() {
         return parent;
     }
+
+
+    //
+    // invokedynamic bits
+    //
+
+    private static final MethodHandle FALLBACK_HANDLE;
+    private static final MethodHandle TRUE_HANDLE;
+    private static final MethodHandle FALSE_HANDLE;
+    static {
+        try {
+            FALLBACK_HANDLE = MethodHandles.lookup().findVirtual(LoggerNode.class, "invokeDynamicFallback",
+                    MethodType.methodType(Boolean.TYPE, CallSite.class, Level.class));
+        } catch (NoSuchMethodException e) {
+            throw new AssertionError(e.getMessage(), e);
+        } catch (IllegalAccessException e) {
+            throw new AssertionError(e.getMessage(), e);
+        }
+
+        TRUE_HANDLE = MethodHandles.constant(Boolean.TYPE, true);
+        FALSE_HANDLE = MethodHandles.constant(Boolean.TYPE, false);
+    }
+
+    void levelChanged() {
+        if (switchpoint == null)
+            return;
+
+        // by creating a new swichpoint and invalidating the old one, it will re-run fallback()
+        // to recompute the constant
+        SwitchPoint oldSwitchPoint = this.switchpoint;
+        this.switchpoint = new SwitchPoint();
+        SwitchPoint.invalidateAll(new SwitchPoint[] {oldSwitchPoint});
+    }
+
+    CallSite createCallSite(Level level) {
+        MutableCallSite cs = new MutableCallSite(MethodType.methodType(Boolean.TYPE));
+        cs.setTarget(FALLBACK_HANDLE.bindTo(this).bindTo(cs).bindTo(level));
+        invokeDynamicFallback(cs, level);
+        return cs;
+    }
+
+    boolean invokeDynamicFallback(CallSite cs, Level level) {
+        boolean enabled = level.intValue() >= effectiveLevel && effectiveLevel != Level.OFF.intValue();
+
+        // By using MethodHandles.constant, the JVM can inline this into the caller
+        // It can potentially then remove the if branch, and when false all logging
+        MethodHandle fallbackMH = cs.getTarget(); // points to this method
+        cs.setTarget(switchpoint.guardWithTest(enabled ? TRUE_HANDLE : FALSE_HANDLE, fallbackMH));
+        return enabled;
+    }
+
+
 
     // GC
 

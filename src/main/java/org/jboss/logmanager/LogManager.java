@@ -25,6 +25,10 @@ package org.jboss.logmanager;
 import java.beans.PropertyChangeListener;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.invoke.CallSite;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodHandles.Lookup;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
@@ -399,5 +403,29 @@ public final class LogManager extends java.util.logging.LogManager {
      */
     public Logger getLogger(String name) {
         return LogContext.getLogContext().getLogger(name);
+    }
+
+
+
+    //
+    // invokedynamic bits
+    //
+
+
+    // this is a convenience for invokedynamic users to set up their bootstrap method
+    public static final MethodType BOOTSTRAP_METHOD_TYPE = MethodType.methodType(CallSite.class, MethodHandles.Lookup.class, String.class, MethodType.class, String.class, String.class);
+
+    public static CallSite bootstrapLoggingEnabled(Lookup caller, String name, MethodType mtype, String category, String level) {
+        if (!isInvokeDynamicEnabled())
+            throw new IllegalStateException("invokedynamicsupport disabled");
+
+        LoggerNode node = LogContext.getLogContext().getRootLoggerNode().getOrCreate(category);
+        return node.createCallSite(Level.parse(level));
+    }
+
+    //FIXME: this should be detected based on JDK version (and overridable)
+    private static final boolean INDY_ENABLED = true;
+    static boolean isInvokeDynamicEnabled() {
+        return INDY_ENABLED;
     }
 }

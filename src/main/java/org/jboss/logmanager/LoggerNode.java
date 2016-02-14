@@ -19,6 +19,7 @@
 
 package org.jboss.logmanager;
 
+import java.lang.reflect.InvocationTargetException;
 import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.Collection;
@@ -102,6 +103,7 @@ final class LoggerNode {
      * this field must be followed immediately by recursively updating the effective loglevel of the child tree.
      */
     private volatile int effectiveLevel = Logger.INFO_INT;
+    private final IndyLogging indyLogging;
 
     /**
      * Construct a new root instance.
@@ -114,6 +116,7 @@ final class LoggerNode {
         handlersUpdater.clear(this);
         this.context = context;
         children = context.createChildMap();
+        indyLogging = new IndyLogging(this);
     }
 
     /**
@@ -142,6 +145,7 @@ final class LoggerNode {
         this.context = context;
         effectiveLevel = parent.effectiveLevel;
         children = context.createChildMap();
+        indyLogging = new IndyLogging(this);
     }
 
     /**
@@ -201,15 +205,31 @@ final class LoggerNode {
         if (sm != null) {
             return AccessController.doPrivileged(new PrivilegedAction<Logger>() {
                 public Logger run() {
-                    final Logger logger = new Logger(LoggerNode.this, fullName);
-                    context.incrementRef(fullName);
-                    return logger;
+                    try {
+                        Logger logger = indyLogging.getLoggerConstructor().newInstance(LoggerNode.this, fullName);
+                        context.incrementRef(fullName);
+                        return logger;
+                    } catch (InstantiationException e) {
+                        throw new RuntimeException(e);
+                    } catch (IllegalAccessException e) {
+                        throw new RuntimeException(e);
+                    } catch (InvocationTargetException e) {
+                        throw new RuntimeException(e);
+                    }
                 }
             });
         } else {
-            final Logger logger = new Logger(this, fullName);
-            context.incrementRef(fullName);
-            return logger;
+            try {
+                Logger logger = indyLogging.getLoggerConstructor().newInstance(this, fullName);
+                context.incrementRef(fullName);
+                return logger;
+            } catch (InstantiationException e) {
+                throw new RuntimeException(e);
+            } catch (IllegalAccessException e) {
+                throw new RuntimeException(e);
+            } catch (InvocationTargetException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 
@@ -343,6 +363,7 @@ final class LoggerNode {
                 }
             }
             effectiveLevel = newEffectiveLevel;
+            indyLogging.notifyLevelChange();
             if (oldEffectiveLevel != newEffectiveLevel) {
                 // our level changed, recurse down to children
                 for (LoggerNode node : children.values()) {
@@ -501,5 +522,9 @@ final class LoggerNode {
         } finally {
             super.finalize();
         }
+    }
+
+    IndyLogging getIndyLogging() {
+        return indyLogging;
     }
 }

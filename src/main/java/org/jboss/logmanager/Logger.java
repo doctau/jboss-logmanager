@@ -32,7 +32,7 @@ import java.util.logging.LogRecord;
  * An actual logger instance.  This is the end-user interface into the logging system.
  */
 @SuppressWarnings({ "SerializableClassWithUnconstructableAncestor" })
-public final class Logger extends java.util.logging.Logger implements Serializable {
+public class Logger extends java.util.logging.Logger implements Serializable {
 
     private static final long serialVersionUID = 5093333069125075416L;
 
@@ -80,7 +80,7 @@ public final class Logger extends java.util.logging.Logger implements Serializab
      * @param loggerNode the node in the named logger tree
      * @param name the fully-qualified name of this node
      */
-    Logger(final LoggerNode loggerNode, final String name) {
+    public Logger(final LoggerNode loggerNode, final String name) {
         // Don't set up the bundle in the parent...
         super(name, null);
         // We maintain our own level
